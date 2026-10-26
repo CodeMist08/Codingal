@@ -1,0 +1,131 @@
+import time
+import requests
+from PIL import Image, ImageEnhance, ImageFilter
+from io import BytesIO
+from config import HF_API_KEY
+
+MODELS = [
+    "black-forest-labs/FLUX.1-schnell",
+    "stabilityai/stable-diffusion-xl-base-1.0",
+    "stable-diffusion-v1-5/stable-diffusion-v1-5",
+    "CompVis/stable-diffusion-v1-4",
+]
+
+HEADERS = {
+    "Authorization": f"Bearer {HF_API_KEY}",
+    "Accept": "image/png"
+}
+
+
+def generate_image_from_text(prompt):
+    """Generate an image from a text prompt."""
+
+    payload = {"inputs": prompt}
+    last_err = None
+
+    for model in MODELS:
+        url = f"https://router.huggingface.co/hf-inference/models/{model}"
+
+        for _ in range(3):
+            try:
+                r = requests.post(
+                    url,
+                    headers=HEADERS,
+                    json=payload,
+                    timeout=120
+                )
+
+                ct = (r.headers.get("content-type") or "").lower()
+
+                # Handle model loading
+                if r.status_code == 503:
+                    try:
+                        wait_s = int(r.json().get("estimated_time", 5))
+                    except (ValueError, requests.exceptions.JSONDecodeError):
+                        wait_s = 5
+
+                    time.sleep(wait_s + 1)
+                    continue
+
+                # Return the generated image
+                if r.status_code == 200 and "image" in ct:
+                    try:
+                        return Image.open(BytesIO(r.content)).convert("RGB")
+                    except Exception as e:
+                        last_err = f"Could not decode image: {e}"
+                        break
+
+                # Record API errors
+                last_err = f"Model {model} returned status {r.status_code}: {r.text[:500]}"
+                break
+
+            except requests.RequestException as e:
+                last_err = str(e)
+                break
+
+    raise Exception(
+        last_err or "Image generation failed for all available models."
+    )
+
+
+def post_process_image(image):
+    """Apply brightness, contrast, and blur effects."""
+
+    image = ImageEnhance.Brightness(image).enhance(1.2)
+    image = ImageEnhance.Contrast(image).enhance(1.2)
+
+    return image.filter(ImageFilter.GaussianBlur(radius=2))
+
+
+def main():
+    print("Welcome to the Post-Processing Magic Workshop!")
+    print("This program generates an image from text and applies effects.")
+    print("Type 'exit' to quit.\n")
+
+    while True:
+        user_input = input(
+            "Enter a description for the image (or 'exit' to quit):\n"
+        ).strip()
+
+        if user_input.lower() == "exit":
+            print("Goodbye!")
+            break
+
+        if not user_input:
+            print("Please enter a description.\n")
+            continue
+
+        try:
+            print("\nGenerating image...")
+
+            image = generate_image_from_text(user_input)
+
+            print("Applying post-processing effects...\n")
+
+            processed_image = post_process_image(image)
+            processed_image.show()
+
+            save_option = input(
+                "Do you want to save the processed image? (yes/no): "
+            ).strip().lower()
+
+            if save_option == "yes":
+                file_name = input(
+                    "Enter a name for the image file (without extension): "
+                ).strip()
+
+                if file_name:
+                    processed_image.save(f"{file_name}.png")
+                    print(f"Image saved as {file_name}.png\n")
+                else:
+                    print("Filename cannot be empty.")
+
+            print("-" * 80 + "\n")
+
+        except Exception as e:
+            print(f"An error occurred: {e}\n")
+
+
+if __name__ == "__main__":
+    main()
+```
